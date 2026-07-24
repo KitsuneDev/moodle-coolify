@@ -18,8 +18,8 @@ RUN set -eux; \
     echo "${MOODLE_SHA256}  /tmp/moodle.tgz" | sha256sum -c -; \
     mkdir -p /opt/moodle; \
     tar -xzf /tmp/moodle.tgz --strip-components=1 -C /opt/moodle; \
-    test -f /opt/moodle/version.php; \
-    test -d /opt/moodle/public
+    test -f /opt/moodle/public/version.php; \
+    test -f /opt/moodle/public/index.php
 
 FROM ${MOODLE_PHP_IMAGE}
 
