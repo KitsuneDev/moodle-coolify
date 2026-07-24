@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+cd /var/www/html
+trap 'exit 0' TERM INT
+
+while true; do
+    started_at="$(date +%s)"
+
+    if ! php admin/cli/cron.php; then
+        echo "Moodle cron returned a non-zero exit status; it will be retried." >&2
+    fi
+
+    finished_at="$(date +%s)"
+    elapsed=$((finished_at - started_at))
+    delay=$((60 - elapsed))
+    if (( delay < 1 )); then
+        delay=1
+    fi
+
+    sleep "$delay" &
+    wait $!
+done

@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+cd /var/www/html
+
+is_true() {
+    case "${1,,}" in
+        1|true|yes|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+set +e
+state_output="$(php /usr/local/libexec/moodle-db-state.php 2>&1)"
+state_status=$?
+set -e
+
+case "$state_status" in
+    10)
+        echo "Moodle database is empty; performing the initial installation."
+
+        install_args=(
+            --agree-license
+            "--lang=${MOODLE_LANG:-en}"
+            "--adminuser=${MOODLE_ADMIN_USER:-admin}"
+            "--adminpass=${MOODLE_ADMIN_PASSWORD:?MOODLE_ADMIN_PASSWORD is required}"
+            "--adminemail=${MOODLE_ADMIN_EMAIL:?MOODLE_ADMIN_EMAIL is required}"
+            "--fullname=${MOODLE_SITE_FULLNAME:-Moodle}"
+            "--shortname=${MOODLE_SITE_SHORTNAME:-Moodle}"
+        )
+
+        if [[ -n "${MOODLE_SITE_SUMMARY:-}" ]]; then
+            install_args+=("--summary=${MOODLE_SITE_SUMMARY}")
+        fi
+        if [[ -n "${MOODLE_SUPPORT_EMAIL:-}" ]]; then
+            install_args+=("--supportemail=${MOODLE_SUPPORT_EMAIL}")
+        else
+            install_args+=("--supportemail=${MOODLE_ADMIN_EMAIL}")
+        fi
+        if [[ -n "${MOODLE_NOREPLY_EMAIL:-}" ]]; then
+            install_args+=("--noreplyemail=${MOODLE_NOREPLY_EMAIL}")
+        fi
+
+        php admin/cli/install_database.php "${install_args[@]}"
+        echo "Initial Moodle installation completed."
+        ;;
+
+    0)
+        echo "Existing Moodle database found; checking for pending upgrades."
+
+        set +e
+        php admin/cli/upgrade.php --is-pending --non-interactive
+        pending_status=$?
+        set -e
+
+        case "$pending_status" in
+            0)
+                echo "Moodle code and database are already synchronized."
+                ;;
+            2)
+                if ! is_true "${MOODLE_AUTO_UPGRADE:-false}"; then
+                    cat >&2 <<'EOF'
+A Moodle database upgrade is required, but MOODLE_AUTO_UPGRADE is false.
+Back up PostgreSQL and moodle_data, set MOODLE_AUTO_UPGRADE=true, and redeploy.
+The web and cron containers will not start against a mismatched database.
+EOF
+                    exit 20
+                fi
+
+                echo "Running the Moodle database upgrade in maintenance mode."
+                php admin/cli/upgrade.php --non-interactive
+                php admin/cli/purge_caches.php
+                php admin/cli/maintenance.php --disable || true
+                echo "Moodle database upgrade completed."
+                ;;
+            *)
+                echo "Unable to determine whether a Moodle upgrade is pending." >&2
+                exit "$pending_status"
+                ;;
+        esac
+        ;;
+
+    *)
+        printf '%s\n' "$state_output" >&2
+        exit "$state_status"
+        ;;
+esac

@@ -1,0 +1,196 @@
+name: moodle
+
+x-moodle-image: &moodle-image moodle-${COOLIFY_RESOURCE_UUID:-local}:${MOODLE_VERSION:-5.2.1}
+
+x-moodle-environment: &moodle-environment
+  MOODLE_URL: ${MOODLE_URL:?Set MOODLE_URL to the public URL, for example https://learn.example.com}
+  MOODLE_DB_HOST: postgres
+  MOODLE_DB_PORT: "5432"
+  MOODLE_DB_NAME: moodle
+  MOODLE_DB_USER: moodle
+  MOODLE_DB_PASSWORD: ${SERVICE_PASSWORD_64_MOODLEDB}
+  MOODLE_DB_PREFIX: ${MOODLE_DB_PREFIX:-mdl_}
+  MOODLE_DB_SSL: ${MOODLE_DB_SSL:-disable}
+  MOODLE_REDIS_HOST: redis
+  MOODLE_REDIS_PORT: "6379"
+  MOODLE_REDIS_PASSWORD: ${SERVICE_PASSWORD_64_MOODLEREDIS}
+  MOODLE_REDIS_PREFIX: ${MOODLE_REDIS_PREFIX:-moodle_sessions_}
+  MOODLE_UPGRADE_KEY: ${SERVICE_PASSWORD_64_MOODLEUPGRADE}
+  MOODLE_REVERSE_PROXY: ${MOODLE_REVERSE_PROXY:-true}
+  MOODLE_DISABLE_WEB_PLUGIN_INSTALL: ${MOODLE_DISABLE_WEB_PLUGIN_INSTALL:-true}
+  MOODLE_UNINSTALL_CLI_ONLY: ${MOODLE_UNINSTALL_CLI_ONLY:-true}
+
+services:
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    shm_size: 256mb
+    environment:
+      POSTGRES_DB: moodle
+      POSTGRES_USER: moodle
+      POSTGRES_PASSWORD: ${SERVICE_PASSWORD_64_MOODLEDB}
+      POSTGRES_INITDB_ARGS: --data-checksums
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${SERVICE_PASSWORD_64_MOODLEREDIS}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-256mb}
+    command:
+      - sh
+      - -ec
+      - >-
+        exec redis-server
+        --appendonly yes
+        --appendfsync everysec
+        --requirepass "$${REDIS_PASSWORD}"
+        --maxmemory "$${REDIS_MAXMEMORY}"
+        --maxmemory-policy noeviction
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - REDISCLI_AUTH="$${REDIS_PASSWORD}" redis-cli ping | grep -q PONG
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging:
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  moodle-data-init:
+    image: alpine:3.22
+    restart: "no"
+    exclude_from_hc: true
+    user: "0:0"
+    volumes:
+      - moodle_data:/var/www/moodledata
+    command:
+      - sh
+      - -ec
+      - |
+        mkdir -p /var/www/moodledata
+        chown 33:33 /var/www/moodledata
+        chmod 0770 /var/www/moodledata
+
+  moodle-prepare:
+    image: *moodle-image
+    restart: "no"
+    exclude_from_hc: true
+    user: "33:33"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      moodle-data-init:
+        condition: service_completed_successfully
+    environment:
+      <<: *moodle-environment
+      MOODLE_AUTO_UPGRADE: ${MOODLE_AUTO_UPGRADE:-false}
+      MOODLE_LANG: ${MOODLE_LANG:-en}
+      MOODLE_ADMIN_USER: ${MOODLE_ADMIN_USER:-admin}
+      MOODLE_ADMIN_PASSWORD: ${SERVICE_PASSWORDWITHSYMBOLS_64_MOODLEADMIN}
+      MOODLE_ADMIN_EMAIL: ${MOODLE_ADMIN_EMAIL:?Set the initial Moodle administrator email address}
+      MOODLE_SITE_FULLNAME: ${MOODLE_SITE_FULLNAME:-Moodle}
+      MOODLE_SITE_SHORTNAME: ${MOODLE_SITE_SHORTNAME:-Moodle}
+      MOODLE_SITE_SUMMARY: ${MOODLE_SITE_SUMMARY:-}
+      MOODLE_SUPPORT_EMAIL: ${MOODLE_SUPPORT_EMAIL:-}
+      MOODLE_NOREPLY_EMAIL: ${MOODLE_NOREPLY_EMAIL:-}
+    volumes:
+      - moodle_data:/var/www/moodledata
+    command: /usr/local/bin/moodle-prepare
+    logging:
+      options:
+        max-size: 20m
+        max-file: "5"
+
+  moodle:
+    image: *moodle-image
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        MOODLE_PHP_IMAGE: ${MOODLE_PHP_IMAGE:-moodlehq/moodle-php-apache:8.3-bookworm}
+        MOODLE_VERSION: ${MOODLE_VERSION:-5.2.1}
+        MOODLE_SERIES: ${MOODLE_SERIES:-502}
+        MOODLE_SHA256: ${MOODLE_SHA256:-db1167f3deef899aef6d4b273d3bc901b102c5d9de2e97289492505c2ec29629}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      moodle-prepare:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: *moodle-environment
+    volumes:
+      - moodle_data:/var/www/moodledata
+    expose:
+      - "80"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          php -r '$$s=@fsockopen("127.0.0.1",80,$$e,$$m,5);
+          if (!$$s) exit(1);
+          fwrite($$s,"GET /login/index.php HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+          $$line=fgets($$s);
+          fclose($$s);
+          exit(preg_match("/^HTTP\\/1\\.[01] [23][0-9][0-9]/", $$line ?: "") ? 0 : 1);'
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+    stop_grace_period: 2m
+    logging:
+      options:
+        max-size: 20m
+        max-file: "5"
+
+  moodle-cron:
+    image: *moodle-image
+    restart: unless-stopped
+    exclude_from_hc: true
+    init: true
+    user: "33:33"
+    depends_on:
+      moodle-prepare:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: *moodle-environment
+    volumes:
+      - moodle_data:/var/www/moodledata
+    command: /usr/local/bin/moodle-cron
+    stop_grace_period: 5m
+    logging:
+      options:
+        max-size: 20m
+        max-file: "5"
+
+volumes:
+  postgres_data:
+  redis_data:
+  moodle_data:
