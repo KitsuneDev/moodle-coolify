@@ -27,6 +27,8 @@ Do not expose PostgreSQL or Redis with a domain or host port.
 If this Coolify resource was created from an older revision:
 
 - Delete the obsolete `SERVICE_URL_MOODLE_80` variable.
+- Delete the obsolete `MOODLE_REVERSE_PROXY` variable if it exists. Coolify preserves the
+  public host header, which is incompatible with Moodle's special host-rewriting mode.
 - Create `MOODLE_URL` with the exact canonical URL configured in the service's
   **Domains** field.
 - Delete `SERVICE_PASSWORDWITHSYMBOLS_64_MOODLEADMIN`; this stack uses
@@ -183,6 +185,9 @@ docker run --rm -u 0:0 -v YOUR_MOODLE_DATA_VOLUME:/data alpine:3.22 \
 
 - Configure SMTP under Moodle's outgoing mail settings and test delivery.
 - TLS termination and certificates are handled by the Coolify domain/proxy configuration.
+- Moodle's `$CFG->reverseproxy` mode is intentionally disabled because Coolify preserves the
+  public `Host` header. For an HTTPS `MOODLE_URL`, `$CFG->sslproxy` and secure cookies are
+  enabled automatically for TLS termination at Coolify.
 - The cron container records a heartbeat after successful runs and becomes unhealthy if no
   success is recorded within `MOODLE_CRON_HEARTBEAT_MAX_AGE` seconds (default 600). It exits
   and restarts after `MOODLE_CRON_MAX_FAILURES` consecutive failures (default 3).

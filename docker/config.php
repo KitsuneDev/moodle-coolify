@@ -65,7 +65,9 @@ $CFG->dataroot = '/var/www/moodledata';
 $CFG->admin = 'admin';
 $CFG->directorypermissions = 02770;
 
-$CFG->reverseproxy = coolify_moodle_bool('MOODLE_REVERSE_PROXY', true);
+// Coolify's proxy preserves the public Host header. Moodle's reverseproxy mode
+// is only for proxies that replace it with a distinct internal hostname.
+$CFG->reverseproxy = false;
 $CFG->sslproxy = strtolower($urlParts['scheme']) === 'https';
 $CFG->cookiesecure = $CFG->sslproxy;
 $CFG->cookiehttponly = true;
