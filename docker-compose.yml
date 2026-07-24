@@ -3,7 +3,7 @@ name: moodle
 x-moodle-image: &moodle-image moodle-${COOLIFY_RESOURCE_UUID:-local}:${MOODLE_VERSION:-5.2.1}
 
 x-moodle-environment: &moodle-environment
-  MOODLE_URL: ${MOODLE_URL:?Set MOODLE_URL to the public URL, for example https://learn.example.com}
+  MOODLE_URL: ${SERVICE_URL_MOODLE_80}
   MOODLE_DB_HOST: postgres
   MOODLE_DB_PORT: "5432"
   MOODLE_DB_NAME: moodle
@@ -91,6 +91,21 @@ services:
         chown 33:33 /var/www/moodledata
         chmod 0770 /var/www/moodledata
 
+  moodle-code-init:
+    image: *moodle-image
+    restart: "no"
+    exclude_from_hc: true
+    user: "0:0"
+    environment:
+      MOODLE_DISABLE_WEB_PLUGIN_INSTALL: ${MOODLE_DISABLE_WEB_PLUGIN_INSTALL:-true}
+    volumes:
+      - moodle_code:/var/www/html
+    command: /usr/local/bin/moodle-code-prepare
+    logging:
+      options:
+        max-size: 20m
+        max-file: "5"
+
   moodle-prepare:
     image: *moodle-image
     restart: "no"
@@ -103,19 +118,22 @@ services:
         condition: service_healthy
       moodle-data-init:
         condition: service_completed_successfully
+      moodle-code-init:
+        condition: service_completed_successfully
     environment:
       <<: *moodle-environment
       MOODLE_AUTO_UPGRADE: ${MOODLE_AUTO_UPGRADE:-false}
       MOODLE_LANG: ${MOODLE_LANG:-en}
       MOODLE_ADMIN_USER: ${MOODLE_ADMIN_USER:-admin}
       MOODLE_ADMIN_PASSWORD: ${SERVICE_PASSWORD_64_MOODLEADMIN}
-      MOODLE_ADMIN_EMAIL: ${MOODLE_ADMIN_EMAIL:?Set the initial Moodle administrator email address}
+      MOODLE_ADMIN_EMAIL: ${MOODLE_ADMIN_EMAIL:?}
       MOODLE_SITE_FULLNAME: ${MOODLE_SITE_FULLNAME:-Moodle}
       MOODLE_SITE_SHORTNAME: ${MOODLE_SITE_SHORTNAME:-Moodle}
       MOODLE_SITE_SUMMARY: ${MOODLE_SITE_SUMMARY:-}
       MOODLE_SUPPORT_EMAIL: ${MOODLE_SUPPORT_EMAIL:-}
       MOODLE_NOREPLY_EMAIL: ${MOODLE_NOREPLY_EMAIL:-}
     volumes:
+      - moodle_code:/var/www/html
       - moodle_data:/var/www/moodledata
     command: /usr/local/bin/moodle-prepare
     logging:
@@ -142,8 +160,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    environment: *moodle-environment
+    environment:
+      <<: *moodle-environment
+      # Declaring the magic URL on the public service lets Coolify generate
+      # and manage its domain with proxy routing to container port 80.
+      SERVICE_URL_MOODLE_80: ${SERVICE_URL_MOODLE_80}
     volumes:
+      - moodle_code:/var/www/html
       - moodle_data:/var/www/moodledata
     expose:
       - "80"
@@ -182,6 +205,7 @@ services:
         condition: service_healthy
     environment: *moodle-environment
     volumes:
+      - moodle_code:/var/www/html
       - moodle_data:/var/www/moodledata
     command: /usr/local/bin/moodle-cron
     stop_grace_period: 5m
@@ -193,4 +217,5 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  moodle_code:
   moodle_data:

@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly source_dir=/opt/moodle
+readonly target_dir=/var/www/html
+readonly source_manifest=/usr/local/share/moodle-image-manifest
+readonly source_fingerprint=/usr/local/share/moodle-image-fingerprint
+readonly target_manifest="${target_dir}/.coolify-image-manifest"
+readonly target_fingerprint="${target_dir}/.coolify-image-fingerprint"
+readonly target_mode="${target_dir}/.coolify-code-mode"
+
+is_true() {
+    case "${1,,}" in
+        1|true|yes|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+if is_true "${MOODLE_DISABLE_WEB_PLUGIN_INSTALL:-true}"; then
+    desired_mode=readonly
+    archive_owner=0
+    archive_group=0
+else
+    desired_mode=writable
+    archive_owner=33
+    archive_group=33
+fi
+
+mkdir -p "$target_dir"
+
+source_id=$(<"$source_fingerprint")
+installed_id=''
+installed_mode=''
+target_had_content=false
+
+if [[ -n "$(find "$target_dir" -mindepth 1 -print -quit)" ]]; then
+    target_had_content=true
+fi
+
+if [[ -f "$target_fingerprint" ]]; then
+    installed_id=$(<"$target_fingerprint")
+fi
+if [[ -f "$target_mode" ]]; then
+    installed_mode=$(<"$target_mode")
+fi
+
+if [[ "$installed_id" != "$source_id" ]]; then
+    echo "Synchronizing image-managed Moodle code into the persistent code volume."
+
+    if [[ -f "$target_manifest" ]]; then
+        if ! awk -F $'\t' '
+            NF != 2 ||
+            ($1 != "F" && $1 != "D") ||
+            $2 == "" ||
+            $2 ~ /^\// ||
+            $2 == ".." ||
+            $2 ~ /^\.\.\// ||
+            $2 ~ /\/\.\.\// ||
+            $2 ~ /\/\.\.$/ {
+                exit 1
+            }
+            END {
+                if (NR == 0) {
+                    exit 1
+                }
+            }
+        ' "$target_manifest"; then
+            echo "The installed Moodle image manifest is invalid." >&2
+            exit 2
+        fi
+
+        (
+            cd "$target_dir"
+            awk -F $'\t' '$1 == "F" { print $2 }' "$target_manifest" \
+              | xargs -r -d $'\n' rm -f --
+            awk -F $'\t' '$1 == "D" { print $2 }' "$target_manifest" \
+              | xargs -r -d $'\n' rmdir --ignore-fail-on-non-empty -- \
+              2>/dev/null || true
+        )
+    fi
+
+    tar -cf - \
+      --owner="$archive_owner" \
+      --group="$archive_group" \
+      --numeric-owner \
+      -C "$source_dir" . \
+      | tar --warning=no-timestamp -xpf - -C "$target_dir"
+
+    install -o root -g root -m 0444 "$source_manifest" "$target_manifest"
+    install -o root -g root -m 0444 "$source_fingerprint" "$target_fingerprint"
+fi
+
+if
+    [[ "$installed_mode" != "$desired_mode" ]] &&
+    { [[ -n "$installed_mode" ]] || [[ "$target_had_content" == true && -z "$installed_id" ]]; }
+then
+    if [[ "$desired_mode" == writable ]]; then
+        echo "Enabling web-server write access to Moodle code for web plugin management."
+        chown -R 33:33 "$target_dir"
+    else
+        echo "Disabling web-server write access to Moodle code."
+        chown -R 0:0 "$target_dir"
+    fi
+fi
+
+# Keep deployment metadata and config.php protected even in writable mode.
+chown root:root "$target_dir"
+chmod 0755 "$target_dir"
+chown root:www-data "${target_dir}/config.php"
+chmod 0440 "${target_dir}/config.php"
+chown root:root "$target_manifest" "$target_fingerprint"
+chmod 0444 "$target_manifest" "$target_fingerprint"
+rm -f "$target_mode"
+printf '%s\n' "$desired_mode" > "$target_mode"
+chown root:root "$target_mode"
+chmod 0444 "$target_mode"
+
+echo "Moodle code volume is synchronized in ${desired_mode} mode."
