@@ -3,7 +3,7 @@ name: moodle
 x-moodle-image: &moodle-image moodle-${COOLIFY_RESOURCE_UUID:-local}:${MOODLE_VERSION:-5.2.1}
 
 x-moodle-environment: &moodle-environment
-  MOODLE_URL: ${SERVICE_URL_MOODLE_80}
+  MOODLE_URL: ${MOODLE_URL:?Set MOODLE_URL to the canonical public URL}
   MOODLE_DB_HOST: postgres
   MOODLE_DB_PORT: "5432"
   MOODLE_DB_NAME: moodle
@@ -99,7 +99,6 @@ services:
     restart: "no"
     exclude_from_hc: true
     user: "0:0"
-    entrypoint: []
     environment:
       MOODLE_DISABLE_WEB_PLUGIN_INSTALL: ${MOODLE_DISABLE_WEB_PLUGIN_INSTALL:-false}
     volumes:
@@ -115,10 +114,6 @@ services:
     image: *moodle-image
     restart: "no"
     exclude_from_hc: true
-    user: "33:33"
-    # The upstream Apache entrypoint rewrites PHP configuration as root before
-    # running the command. This CLI-only service intentionally runs as www-data.
-    entrypoint: []
     depends_on:
       postgres:
         condition: service_healthy
@@ -143,7 +138,12 @@ services:
     volumes:
       - moodle_code:/var/www/html
       - moodle_data:/var/www/moodledata
-    command: /usr/local/bin/moodle-prepare
+    command:
+      - /usr/bin/setpriv
+      - --reuid=33
+      - --regid=33
+      - --clear-groups
+      - /usr/local/bin/moodle-prepare
     logging:
       driver: local
       options:
@@ -169,11 +169,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    environment:
-      <<: *moodle-environment
-      # Declaring the magic URL on the public service lets Coolify generate
-      # and manage its domain with proxy routing to container port 80.
-      SERVICE_URL_MOODLE_80:
+    environment: *moodle-environment
     volumes:
       - moodle_code:/var/www/html
       - moodle_data:/var/www/moodledata
@@ -204,9 +200,6 @@ services:
     image: *moodle-image
     restart: unless-stopped
     init: true
-    user: "33:33"
-    # Cron needs PHP, but not the root-only Apache/PHP initialization entrypoint.
-    entrypoint: []
     depends_on:
       moodle-prepare:
         condition: service_completed_successfully
@@ -221,7 +214,12 @@ services:
     volumes:
       - moodle_code:/var/www/html
       - moodle_data:/var/www/moodledata
-    command: /usr/local/bin/moodle-cron
+    command:
+      - /usr/bin/setpriv
+      - --reuid=33
+      - --regid=33
+      - --clear-groups
+      - /usr/local/bin/moodle-cron
     healthcheck:
       test:
         - CMD-SHELL

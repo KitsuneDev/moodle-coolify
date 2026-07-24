@@ -9,8 +9,9 @@ container replacement.
 
 1. Put this directory in a Git repository.
 2. Create a Coolify resource using the **Docker Compose** build pack.
-3. Coolify creates `SERVICE_URL_MOODLE_80` and assigns a generated domain to the `moodle`
-   service. Replace that domain in the service's **Domains** field if you want a custom one.
+3. Set the required `MOODLE_URL` variable to the canonical public URL, including `https://`.
+   Assign the same URL to the `moodle` service in Coolify's **Domains** field, routing it to
+   container port 80.
 4. Set the required `MOODLE_ADMIN_EMAIL` variable.
 5. Web plugin/theme installation and GUI uninstall are enabled by default. If this
    resource was created from an older revision, explicitly set:
@@ -25,18 +26,18 @@ Do not expose PostgreSQL or Redis with a domain or host port.
 
 If this Coolify resource was created from an older revision:
 
-- Delete the obsolete `MOODLE_URL` variable; Coolify now manages
-  `SERVICE_URL_MOODLE_80`.
+- Delete the obsolete `SERVICE_URL_MOODLE_80` variable.
+- Create `MOODLE_URL` with the exact canonical URL configured in the service's
+  **Domains** field.
 - Delete `SERVICE_PASSWORDWITHSYMBOLS_64_MOODLEADMIN`; this stack uses
   `SERVICE_PASSWORD_64_MOODLEADMIN`. Symbol passwords containing `$` can be interpreted as
   variable references unless marked **Literal**.
 
 ## Coolify environment variables
 
-Coolify automatically creates these magic variables and keeps their values stable between
+Coolify automatically creates these password variables and keeps their values stable between
 deployments:
 
-- `SERVICE_URL_MOODLE_80`: public URL and proxy route for the `moodle` service on port 80.
 - `SERVICE_PASSWORD_64_MOODLEDB`: PostgreSQL password.
 - `SERVICE_PASSWORD_64_MOODLEREDIS`: Redis password.
 - `SERVICE_PASSWORD_64_MOODLEADMIN`: initial Moodle administrator password.
@@ -46,9 +47,9 @@ deployments:
 give this stack's locally built Moodle image a collision-free name. It does not need to be
 created manually.
 
-The only required user-supplied variable is `MOODLE_ADMIN_EMAIL`; Coolify highlights it
-when empty. Other `MOODLE_*`, cron-monitoring, and Redis variables have editable defaults.
-Secret values and normal application settings are runtime configuration; only
+The required user-supplied variables are `MOODLE_URL` and `MOODLE_ADMIN_EMAIL`; Coolify
+highlights them when empty. Other `MOODLE_*`, cron-monitoring, and Redis variables have
+editable defaults. Secret values and normal application settings are runtime configuration; only
 `MOODLE_PHP_IMAGE`, `MOODLE_VERSION`, `MOODLE_SERIES`, and `MOODLE_SHA256` affect the image
 build.
 
@@ -139,7 +140,7 @@ and update that digest deliberately.
 
 1. Add the new DNS record.
 2. Change the domain assigned to the `moodle` service in Coolify.
-3. Confirm Coolify updated `SERVICE_URL_MOODLE_80` to the exact canonical URL.
+3. Update `MOODLE_URL` to the exact canonical URL.
 4. Redeploy so Moodle receives the new canonical URL.
 5. After a database backup, replace stored absolute URLs:
 
