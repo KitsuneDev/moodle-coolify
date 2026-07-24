@@ -70,9 +70,10 @@ $CFG->sslproxy = strtolower($urlParts['scheme']) === 'https';
 $CFG->cookiesecure = $CFG->sslproxy;
 $CFG->cookiehttponly = true;
 
-// Moodle code and plugins are managed by the Docker image, not the web UI.
-$CFG->disableupdateautodeploy = coolify_moodle_bool('MOODLE_DISABLE_WEB_PLUGIN_INSTALL', true);
-$CFG->uninstallclionly = coolify_moodle_bool('MOODLE_UNINSTALL_CLI_ONLY', true);
+// The persistent code volume supports web-managed plugins and themes. These
+// controls can restore image/CLI-only management for more restrictive sites.
+$CFG->disableupdateautodeploy = coolify_moodle_bool('MOODLE_DISABLE_WEB_PLUGIN_INSTALL', false);
+$CFG->uninstallclionly = coolify_moodle_bool('MOODLE_UNINSTALL_CLI_ONLY', false);
 $CFG->expectedcronfrequency = 200;
 
 $upgradeKey = getenv('MOODLE_UPGRADE_KEY');
@@ -90,7 +91,6 @@ $CFG->session_redis_auth = coolify_moodle_env('MOODLE_REDIS_PASSWORD');
 $CFG->session_redis_prefix = coolify_moodle_env('MOODLE_REDIS_PREFIX', 'moodle_sessions_');
 $CFG->session_redis_acquire_lock_timeout = 120;
 $CFG->session_redis_acquire_lock_retry = 100;
-$CFG->session_redis_lock_expire = 7200;
 $CFG->session_redis_serializer_use_igbinary = false;
 
 umask(0007);

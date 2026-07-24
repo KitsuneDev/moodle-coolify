@@ -17,8 +17,8 @@ x-moodle-environment: &moodle-environment
   MOODLE_REDIS_PREFIX: ${MOODLE_REDIS_PREFIX:-moodle_sessions_}
   MOODLE_UPGRADE_KEY: ${SERVICE_PASSWORD_64_MOODLEUPGRADE}
   MOODLE_REVERSE_PROXY: ${MOODLE_REVERSE_PROXY:-true}
-  MOODLE_DISABLE_WEB_PLUGIN_INSTALL: ${MOODLE_DISABLE_WEB_PLUGIN_INSTALL:-true}
-  MOODLE_UNINSTALL_CLI_ONLY: ${MOODLE_UNINSTALL_CLI_ONLY:-true}
+  MOODLE_DISABLE_WEB_PLUGIN_INSTALL: ${MOODLE_DISABLE_WEB_PLUGIN_INSTALL:-false}
+  MOODLE_UNINSTALL_CLI_ONLY: ${MOODLE_UNINSTALL_CLI_ONLY:-false}
 
 services:
   postgres:
@@ -41,6 +41,7 @@ services:
       retries: 12
       start_period: 30s
     logging:
+      driver: local
       options:
         max-size: 10m
         max-file: "3"
@@ -50,7 +51,8 @@ services:
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${SERVICE_PASSWORD_64_MOODLEREDIS}
-      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-256mb}
+      REDIS_MAXMEMORY: ${REDIS_MAXMEMORY:-512mb}
+      REDIS_MAXMEMORY_POLICY: ${REDIS_MAXMEMORY_POLICY:-volatile-lru}
     command:
       - sh
       - -ec
@@ -60,7 +62,7 @@ services:
         --appendfsync everysec
         --requirepass "$${REDIS_PASSWORD}"
         --maxmemory "$${REDIS_MAXMEMORY}"
-        --maxmemory-policy noeviction
+        --maxmemory-policy "$${REDIS_MAXMEMORY_POLICY}"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -72,6 +74,7 @@ services:
       retries: 12
       start_period: 20s
     logging:
+      driver: local
       options:
         max-size: 10m
         max-file: "3"
@@ -96,12 +99,14 @@ services:
     restart: "no"
     exclude_from_hc: true
     user: "0:0"
+    entrypoint: []
     environment:
-      MOODLE_DISABLE_WEB_PLUGIN_INSTALL: ${MOODLE_DISABLE_WEB_PLUGIN_INSTALL:-true}
+      MOODLE_DISABLE_WEB_PLUGIN_INSTALL: ${MOODLE_DISABLE_WEB_PLUGIN_INSTALL:-false}
     volumes:
       - moodle_code:/var/www/html
     command: /usr/local/bin/moodle-code-prepare
     logging:
+      driver: local
       options:
         max-size: 20m
         max-file: "5"
@@ -111,6 +116,9 @@ services:
     restart: "no"
     exclude_from_hc: true
     user: "33:33"
+    # The upstream Apache entrypoint rewrites PHP configuration as root before
+    # running the command. This CLI-only service intentionally runs as www-data.
+    entrypoint: []
     depends_on:
       postgres:
         condition: service_healthy
@@ -137,6 +145,7 @@ services:
       - moodle_data:/var/www/moodledata
     command: /usr/local/bin/moodle-prepare
     logging:
+      driver: local
       options:
         max-size: 20m
         max-file: "5"
@@ -164,7 +173,7 @@ services:
       <<: *moodle-environment
       # Declaring the magic URL on the public service lets Coolify generate
       # and manage its domain with proxy routing to container port 80.
-      SERVICE_URL_MOODLE_80: ${SERVICE_URL_MOODLE_80}
+      SERVICE_URL_MOODLE_80:
     volumes:
       - moodle_code:/var/www/html
       - moodle_data:/var/www/moodledata
@@ -186,6 +195,7 @@ services:
       start_period: 90s
     stop_grace_period: 2m
     logging:
+      driver: local
       options:
         max-size: 20m
         max-file: "5"
@@ -193,9 +203,10 @@ services:
   moodle-cron:
     image: *moodle-image
     restart: unless-stopped
-    exclude_from_hc: true
     init: true
     user: "33:33"
+    # Cron needs PHP, but not the root-only Apache/PHP initialization entrypoint.
+    entrypoint: []
     depends_on:
       moodle-prepare:
         condition: service_completed_successfully
@@ -203,13 +214,28 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    environment: *moodle-environment
+    environment:
+      <<: *moodle-environment
+      MOODLE_CRON_MAX_FAILURES: ${MOODLE_CRON_MAX_FAILURES:-3}
+      MOODLE_CRON_HEARTBEAT_MAX_AGE: ${MOODLE_CRON_HEARTBEAT_MAX_AGE:-600}
     volumes:
       - moodle_code:/var/www/html
       - moodle_data:/var/www/moodledata
     command: /usr/local/bin/moodle-cron
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          php -r '$$f="/tmp/moodle-cron-heartbeat";
+          $$age=(int)(getenv("MOODLE_CRON_HEARTBEAT_MAX_AGE") ?: 600);
+          exit(is_file($$f) && (time() - filemtime($$f)) <= $$age ? 0 : 1);'
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 10m
     stop_grace_period: 5m
     logging:
+      driver: local
       options:
         max-size: 20m
         max-file: "5"

@@ -12,7 +12,8 @@ container replacement.
 3. Coolify creates `SERVICE_URL_MOODLE_80` and assigns a generated domain to the `moodle`
    service. Replace that domain in the service's **Domains** field if you want a custom one.
 4. Set the required `MOODLE_ADMIN_EMAIL` variable.
-5. To enable web plugin/theme installation and GUI uninstall, set:
+5. Web plugin/theme installation and GUI uninstall are enabled by default. If this
+   resource was created from an older revision, explicitly set:
    - `MOODLE_DISABLE_WEB_PLUGIN_INSTALL=false`
    - `MOODLE_UNINSTALL_CLI_ONLY=false`
 6. Optionally customize `MOODLE_SITE_FULLNAME` and `MOODLE_SITE_SHORTNAME`.
@@ -46,8 +47,8 @@ give this stack's locally built Moodle image a collision-free name. It does not 
 created manually.
 
 The only required user-supplied variable is `MOODLE_ADMIN_EMAIL`; Coolify highlights it
-when empty. Other `MOODLE_*` and `REDIS_MAXMEMORY` variables have editable defaults. Secret
-values and normal application settings are runtime configuration; only
+when empty. Other `MOODLE_*`, cron-monitoring, and Redis variables have editable defaults.
+Secret values and normal application settings are runtime configuration; only
 `MOODLE_PHP_IMAGE`, `MOODLE_VERSION`, `MOODLE_SERIES`, and `MOODLE_SHA256` affect the image
 build.
 
@@ -59,6 +60,10 @@ With `MOODLE_DISABLE_WEB_PLUGIN_INSTALL=false`, administrators can install and u
 plugins and themes from Moodle's web interface. The `moodle_code` volume preserves those
 files across restarts and deployments. The image synchronization service refreshes only
 files managed by the previous image, leaving web-installed extension directories intact.
+
+To enforce image/CLI-only extension management instead, set
+`MOODLE_DISABLE_WEB_PLUGIN_INSTALL=true` and `MOODLE_UNINSTALL_CLI_ONLY=true`, then
+redeploy. This changes the persistent code volume back to root-owned read-only mode.
 
 Do not manage the same extension both through the web interface and `moodle-overlay/`.
 Image-managed code wins during deployment and will overwrite that extension's web changes.
@@ -177,14 +182,24 @@ docker run --rm -u 0:0 -v YOUR_MOODLE_DATA_VOLUME:/data alpine:3.22 \
 
 - Configure SMTP under Moodle's outgoing mail settings and test delivery.
 - TLS termination and certificates are handled by the Coolify domain/proxy configuration.
+- The cron container records a heartbeat after successful runs and becomes unhealthy if no
+  success is recorded within `MOODLE_CRON_HEARTBEAT_MAX_AGE` seconds (default 600). It exits
+  and restarts after `MOODLE_CRON_MAX_FAILURES` consecutive failures (default 3).
 - This stack does not provision SMTP, antivirus, object storage, external search, monitoring,
   or automated backups. Add those separately if your requirements call for them.
 - Some plugins require extra PHP extensions, system packages, services, or scheduled setup;
   review each plugin's requirements and extend the Dockerfile/Compose stack when necessary.
 - Monitor disk usage for PostgreSQL, `moodledata`, Docker images, and Redis AOF data.
-- `REDIS_MAXMEMORY` defaults to `256mb` with `noeviction`; increase it for a larger user base.
+- `REDIS_MAXMEMORY` defaults to `512mb`. `REDIS_MAXMEMORY_POLICY` defaults to
+  `volatile-lru`, so memory pressure may sign out inactive users instead of causing all new
+  session writes to fail. Increase the limit for a larger user base and alert on evictions.
+- Redis recommends `vm.overcommit_memory=1` on the Docker host. This kernel setting is not
+  container-namespaced and must be configured by the server administrator; check the Redis
+  startup log and host policy before changing it.
 - Redis is configured for sessions only. If you add a Moodle application-cache store, use a
   different Redis database/prefix or a separate Redis service.
+- Container logs use Docker's `local` driver with rotation limits. Forward or drain them
+  separately if centralized retention is required.
 - Large course backups and uploads may require higher PHP limits than the included 256 MB
   upload default.
 - Do not enable rolling/parallel application upgrades. Treat Moodle code/database upgrades

@@ -4,11 +4,34 @@ set -Eeuo pipefail
 cd /var/www/html
 trap 'exit 0' TERM INT
 
+readonly heartbeat_file=/tmp/moodle-cron-heartbeat
+readonly max_failures="${MOODLE_CRON_MAX_FAILURES:-3}"
+readonly heartbeat_max_age="${MOODLE_CRON_HEARTBEAT_MAX_AGE:-600}"
+
+if [[ ! "$max_failures" =~ ^[1-9][0-9]*$ ]]; then
+    echo "MOODLE_CRON_MAX_FAILURES must be a positive integer." >&2
+    exit 2
+fi
+if [[ ! "$heartbeat_max_age" =~ ^[1-9][0-9]*$ ]]; then
+    echo "MOODLE_CRON_HEARTBEAT_MAX_AGE must be a positive integer." >&2
+    exit 2
+fi
+
+failure_count=0
+
 while true; do
     started_at="$(date +%s)"
 
-    if ! php admin/cli/cron.php; then
-        echo "Moodle cron returned a non-zero exit status; it will be retried." >&2
+    if php admin/cli/cron.php; then
+        touch "$heartbeat_file"
+        failure_count=0
+    else
+        ((failure_count += 1))
+        echo "Moodle cron failed (${failure_count}/${max_failures})." >&2
+        if (( failure_count >= max_failures )); then
+            echo "Moodle cron failed repeatedly; exiting so the container is restarted." >&2
+            exit 1
+        fi
     fi
 
     finished_at="$(date +%s)"

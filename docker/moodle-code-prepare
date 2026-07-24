@@ -16,7 +16,7 @@ is_true() {
     esac
 }
 
-if is_true "${MOODLE_DISABLE_WEB_PLUGIN_INSTALL:-true}"; then
+if is_true "${MOODLE_DISABLE_WEB_PLUGIN_INSTALL:-false}"; then
     desired_mode=readonly
     archive_owner=0
     archive_group=0
