@@ -15,7 +15,7 @@ Only PostgreSQL, Redis, and `moodledata` are persistent; Moodle core, plugins, t
 5. Assign the public domain only to the `moodle` service, using container port 80.
 6. Deploy.
 7. Retrieve the generated initial admin password from
-   `SERVICE_PASSWORDWITHSYMBOLS_64_MOODLEADMIN` in Coolify.
+   `SERVICE_PASSWORD_64_MOODLEADMIN` in Coolify.
 
 Do not expose PostgreSQL or Redis with a domain or host port.
 
@@ -23,9 +23,9 @@ Do not expose PostgreSQL or Redis with a domain or host port.
 
 Place extensions in `moodle-overlay/` using their final Moodle paths, for example:
 
-- `moodle-overlay/mod/customactivity/`
-- `moodle-overlay/local/customplugin/`
-- `moodle-overlay/theme/customtheme/`
+- `moodle-overlay/public/mod/customactivity/`
+- `moodle-overlay/public/local/customplugin/`
+- `moodle-overlay/public/theme/customtheme/`
 
 Commit and redeploy. Web-based plugin installation and GUI uninstall are disabled by
 default because the application code is immutable. Remove a plugin from the image only
