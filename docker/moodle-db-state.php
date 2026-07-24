@@ -10,6 +10,10 @@ function required_env(string $name): string {
     return $value;
 }
 
+function pg_connection_value(string $value): string {
+    return "'" . addcslashes($value, "\\'") . "'";
+}
+
 $prefix = getenv('MOODLE_DB_PREFIX') ?: 'mdl_';
 if (!preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', $prefix)) {
     fwrite(STDERR, "Invalid database prefix.\n");
@@ -17,35 +21,54 @@ if (!preg_match('/^[A-Za-z][A-Za-z0-9_]*$/', $prefix)) {
 }
 
 $sslMode = getenv('MOODLE_DB_SSL') ?: 'disable';
-$dsn = sprintf(
-    'pgsql:host=%s;port=%s;dbname=%s;sslmode=%s',
-    required_env('MOODLE_DB_HOST'),
-    getenv('MOODLE_DB_PORT') ?: '5432',
-    required_env('MOODLE_DB_NAME'),
-    $sslMode,
-);
+if (!in_array($sslMode, ['disable', 'prefer', 'require', 'verify-full'], true)) {
+    fwrite(STDERR, "Invalid database SSL mode.\n");
+    exit(2);
+}
 
 try {
-    $pdo = new PDO(
-        $dsn,
-        required_env('MOODLE_DB_USER'),
-        required_env('MOODLE_DB_PASSWORD'),
-        [
-            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        ],
+    $connectionString = sprintf(
+        'host=%s port=%s dbname=%s user=%s password=%s sslmode=%s connect_timeout=10',
+        pg_connection_value(required_env('MOODLE_DB_HOST')),
+        pg_connection_value(getenv('MOODLE_DB_PORT') ?: '5432'),
+        pg_connection_value(required_env('MOODLE_DB_NAME')),
+        pg_connection_value(required_env('MOODLE_DB_USER')),
+        pg_connection_value(required_env('MOODLE_DB_PASSWORD')),
+        $sslMode,
     );
 
-    $schema = (string) $pdo->query('SELECT current_schema()')->fetchColumn();
+    $connection = @pg_connect($connectionString, PGSQL_CONNECT_FORCE_NEW);
+    if ($connection === false) {
+        throw new RuntimeException('PostgreSQL connection failed.');
+    }
+
+    $schemaResult = pg_query($connection, 'SELECT current_schema()');
+    if ($schemaResult === false) {
+        throw new RuntimeException(pg_last_error($connection));
+    }
+    $schema = (string) pg_fetch_result($schemaResult, 0, 0);
     $relation = $schema . '.' . $prefix . 'config';
 
-    $statement = $pdo->prepare('SELECT to_regclass(:relation)');
-    $statement->execute(['relation' => $relation]);
-    $row = $statement->fetch(PDO::FETCH_NUM);
+    $relationResult = pg_query_params(
+        $connection,
+        'SELECT to_regclass($1)',
+        [$relation],
+    );
+    if ($relationResult === false) {
+        throw new RuntimeException(pg_last_error($connection));
+    }
+    $configTable = pg_fetch_result($relationResult, 0, 0);
 
-    if (!$row || $row[0] === null) {
-        $tableCount = (int) $pdo
-            ->query("SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = current_schema()")
-            ->fetchColumn();
+    if ($configTable === false || $configTable === null) {
+        $countResult = pg_query_params(
+            $connection,
+            'SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = $1',
+            [$schema],
+        );
+        if ($countResult === false) {
+            throw new RuntimeException(pg_last_error($connection));
+        }
+        $tableCount = (int) pg_fetch_result($countResult, 0, 0);
 
         if ($tableCount > 0) {
             fwrite(STDERR, "The database is not empty, but no Moodle config table was found.\n");

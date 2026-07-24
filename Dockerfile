@@ -28,7 +28,8 @@ LABEL org.opencontainers.image.title="Moodle for Coolify" \
 
 RUN set -eux; \
     cp "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"; \
-    mkdir -p /opt/moodle /usr/local/share
+    mkdir -p /opt/moodle /usr/local/libexec /usr/local/share; \
+    chmod 0755 /usr/local/libexec
 
 COPY --chown=root:root --from=moodle-download /opt/moodle/ /opt/moodle/
 
